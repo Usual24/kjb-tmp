@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="form-page">
+  <div class="form-card">
+    <h2>내 프로필 편집</h2>
+    <button class="btn secondary" id="browserNotificationsButton" type="button" data-enabled="{{ 'true' if profile_user.browser_notifications_enabled else 'false' }}">
+      {% if profile_user.browser_notifications_enabled %}알림 끄기{% else %}알림 켜기{% endif %}
+    </button>
+    <form method="post" enctype="multipart/form-data">
+      <label>이름</label>
+      <input type="text" name="name" value="{{ profile_user.name }}">
+      <label>프로필 사진 업로드</label>
+      <input type="file" name="avatar_file" accept="image/*">
+      <div class="preview">
+        <img src="{{ profile_user.avatar_url|media }}" alt="현재 프로필">
+      </div>
+      <label>소개</label>
+      <textarea name="bio" rows="4">{{ profile_user.bio }}</textarea>
+      <button class="btn primary" type="submit">저장</button>
+    </form>
+  </div>
+</section>
+
+<script>
+  (() => {
+    const button = document.getElementById('browserNotificationsButton');
+    if (!button) return;
+    const getEnabled = () => button.dataset.enabled === 'true';
+    const setEnabled = (enabled) => {
+      button.dataset.enabled = enabled ? 'true' : 'false';
+      button.textContent = enabled ? '알림 끄기' : '알림 켜기';
+    };
+
+    button.addEventListener('click', async () => {
+      const enabling = !getEnabled();
+      const vapidKey = window.KJB_VAPID_PUBLIC_KEY || '';
+      if (enabling) {
+        if (!vapidKey) {
+          alert('웹푸시 키가 설정되지 않았습니다. 서버 VAPID 설정이 필요합니다.');
+          return;
+        }
+        if (!('Notification' in window)) {
+          alert('이 브라우저는 알림 권한을 지원하지 않습니다.');
+          return;
+        }
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+          alert('이 브라우저는 웹푸시를 지원하지 않습니다.');
+          return;
+        }
+        try {
+          const permission = await Notification.requestPermission();
+          if (permission !== 'granted') return;
+        } catch (_) {
+          return;
+        }
+      }
+
+      try {
+        button.disabled = true;
+        if (enabling) {
+          const registration = await navigator.serviceWorker.register('/sw.js');
+          const existing = await registration.pushManager.getSubscription();
+          if (existing) await existing.unsubscribe();
+          const applicationServerKey = urlBase64ToUint8Array(vapidKey);
+          const subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey,
+          });
+          const response = await fetch('/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(subscription.toJSON()),
+          });
+          if (!response.ok) {
+            const reason = await response.text().catch(() => '');
+            await subscription.unsubscribe();
+            alert(reason ? `웹푸시 설정에 실패했습니다. (${reason})` : '웹푸시 설정에 실패했습니다.');
+            return;
+          }
+          setEnabled(true);
+        } else {
+          const registration = await navigator.serviceWorker.getRegistration();
+          const subscription = registration ? await registration.pushManager.getSubscription() : null;
+          if (subscription) {
+            await subscription.unsubscribe();
+          }
+          await fetch('/push/unsubscribe', { method: 'POST' });
+          setEnabled(false);
+        }
+      } catch (error) {
+        console.error(error);
+        alert(`웹푸시 설정에 실패했습니다. ${error?.name || ''} ${error?.message || ''}`.trim());
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    function urlBase64ToUint8Array(base64String) {
+      const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+      const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const rawData = window.atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray;
+    }
+  })();
+</script>
+{% endblock %}

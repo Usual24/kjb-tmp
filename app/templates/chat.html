@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block body_class %}chat-page{% endblock %}
+
+{% block drawer_extra %}
+<div class="drawer-section">
+  <h3>채널</h3>
+  <ul class="drawer-channel-list">
+    {% for ch in channels %}
+      <li class="{% if ch.id == channel.id %}active{% endif %}" data-channel-id="{{ ch.id }}" data-channel-slug="{{ ch.slug }}">
+        <a href="/chat?id={{ ch.slug }}" data-channel-id="{{ ch.id }}">{{ ch.name }}{% if ch.id in unread_channel_ids %}<span class="unread-dot" aria-label="읽지 않음"></span>{% endif %}</a>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+<div class="drawer-section">
+  <h3>온라인</h3>
+  <ul data-online-list="online"></ul>
+</div>
+<div class="drawer-section">
+  <h3>오프라인</h3>
+  <ul data-online-list="offline"></ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="chat-layout">
+  <aside class="sidebar">
+    <h3>채널</h3>
+    <ul>
+      {% for ch in channels %}
+        <li class="{% if ch.id == channel.id %}active{% endif %}" data-channel-id="{{ ch.id }}" data-channel-slug="{{ ch.slug }}">
+          <a href="/chat?id={{ ch.slug }}" data-channel-id="{{ ch.id }}">{{ ch.name }}{% if ch.id in unread_channel_ids %}<span class="unread-dot" aria-label="읽지 않음"></span>{% endif %}</a>
+        </li>
+      {% endfor %}
+    </ul>
+  </aside>
+
+  <main class="chat-main" data-channel="{{ channel.slug }}" data-channel-id="{{ channel.id }}" data-can-send="{{ 'true' if can_send else 'false' }}">
+    <div class="chat-header">
+      <div>
+        <h2>{{ channel.name }}</h2>
+        <p>{{ channel.description }}</p>
+      </div>
+    </div>
+    <div id="chatMessages" class="chat-messages">
+      {% if not can_read %}
+        <p class="empty">읽기 권한이 없습니다.</p>
+      {% else %}
+        {% for message in messages %}
+          <div class="message" id="message-{{ message.id }}" data-message-id="{{ message.id }}" data-user-id="{{ message.user_id }}">
+            <a href="/profile?usr={{ message.user_prefix }}" class="avatar-link">
+              <img src="{{ message.avatar }}" alt="avatar">
+            </a>
+            <div class="message-body">
+              <div class="message-meta">
+                <a href="/profile?usr={{ message.user_prefix }}" {% if message.name_color %}style="color: {{ message.name_color }};"{% endif %}>{{ message.user_name }}</a>
+                {% if message.accessory_image %}
+                  <img src="{{ message.accessory_image }}" class="name-accessory" alt="accessory">
+                {% endif %}
+                <span>{{ message.created_at }}</span>
+                {% if message.updated_at and message.updated_at != message.created_at %}
+                  <span class="edited">수정됨</span>
+                {% endif %}
+              </div>
+              {% if message.reply_to and message.reply_to_id %}
+                <a class="reply-preview" href="#message-{{ message.reply_to_id }}" data-message-target="{{ message.reply_to_id }}">↳ {{ message.reply_to }}</a>
+              {% elif message.reply_to %}
+                <div class="reply-preview">↳ {{ message.reply_to }}</div>
+              {% endif %}
+              <div class="message-content">{{ message.rendered_content|safe }}</div>
+              {% set attachment_url = message.attachment_url or message.image_url %}
+              {% if attachment_url %}
+                {% if (message.attachment_mime and message.attachment_mime.startswith('image/')) or message.image_url %}
+                  <a class="message-image-link" href="{{ attachment_url|media }}" target="_blank" rel="noopener noreferrer">
+                    <img class="message-image" src="{{ attachment_url|media }}" alt="첨부 이미지">
+                  </a>
+                {% else %}
+                  <a class="message-file-link" href="{{ attachment_url|media }}" target="_blank" rel="noopener noreferrer">
+                    <span class="message-file-icon">파일</span>
+                    <span class="message-file-name">{{ message.attachment_name or attachment_url.rsplit('/', 1)[-1] }}</span>
+                  </a>
+                {% endif %}
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      {% endif %}
+    </div>
+    <div id="replyBanner" class="reply-banner hidden">
+      <a id="replyBannerLink" class="reply-banner-link" href="#"></a>
+      <button id="replyCancel" class="btn secondary" type="button">답장 취소</button>
+    </div>
+    <div id="typingIndicator" class="typing-indicator hidden"></div>
+    <div class="chat-input-wrap">
+      <div id="emojiSuggest" class="emoji-suggest" aria-hidden="true" hidden></div>
+      <input id="imageInput" type="file" accept="*/*" hidden>
+      <div id="attachmentPreview" class="attachment-preview hidden"></div>
+      <div class="chat-input">
+        <button class="btn secondary" id="imageButton" type="button" {% if not can_send %}disabled{% endif %}>+</button>
+        <textarea id="chatInput" placeholder="메시지를 입력하세요..." {% if not can_send %}disabled{% endif %}></textarea>
+        <button class="btn primary" id="sendButton" {% if not can_send %}disabled{% endif %}>^</button>
+      </div>
+      {% if not can_send %}<p class="hint">이 채널은 메시지 전송 권한이 없습니다.</p>{% endif %}
+    </div>
+  </main>
+
+  <aside class="online">
+    <h3>온라인</h3>
+    <ul data-online-list="online"></ul>
+    <h3 class="presence-heading">오프라인</h3>
+    <ul data-online-list="offline"></ul>
+  </aside>
+</div>
+
+<div id="contextMenu" class="context-menu hidden">
+  <button data-action="reply">답장</button>
+  <button data-action="edit">수정</button>
+  <button data-action="delete">삭제</button>
+</div>
+<div id="contextMenuBackdrop" class="context-menu-backdrop hidden" aria-hidden="true"></div>
+
+<script defer src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+  window.KJB_CURRENT_USER_ID = {{ current_user.id }};
+  window.KJB_CURRENT_USER_NAME = {{ current_user.name|tojson }};
+  window.KJB_CURRENT_USER_PREFIX = {{ current_user.email_prefix|tojson }};
+  window.KJB_CURRENT_USER_AVATAR = {{ current_user.avatar_url|media|tojson }};
+  window.KJB_IS_ADMIN = {{ 'true' if current_user.is_admin else 'false' }};
+  window.KJB_EMOJI_CATALOG = {{ emoji_catalog|tojson }};
+  window.KJB_MENTION_CATALOG = {{ mention_catalog|tojson }};
+</script>
+<script defer src="/static/js/chat.js"></script>
+{% endblock %}
